@@ -308,35 +308,38 @@ window.Unity = { \
     }];
 }
 
-+ (void)clearCookies
+- (void)clearCookies
 {
     [CWebViewPlugin resetSharedProcessPool];
 
-    // cf. https://dev.classmethod.jp/smartphone/remove-webview-cookies/
-    NSString *libraryPath = NSSearchPathForDirectoriesInDomains(NSLibraryDirectory, NSUserDomainMask, YES).firstObject;
-    NSString *cookiesPath = [libraryPath stringByAppendingPathComponent:@"Cookies"];
-    NSString *webKitPath = [libraryPath stringByAppendingPathComponent:@"WebKit"];
-    [[NSFileManager defaultManager] removeItemAtPath:cookiesPath error:nil];
-    [[NSFileManager defaultManager] removeItemAtPath:webKitPath error:nil];
-
+    // clear NSHTTPCookieStorage for UIWebView (iOS < 11)
     NSHTTPCookieStorage *cookieStorage = [NSHTTPCookieStorage sharedHTTPCookieStorage];
-    if (cookieStorage == nil) {
-        // cf. https://stackoverflow.com/questions/33876295/nshttpcookiestorage-sharedhttpcookiestorage-comes-up-empty-in-10-11
-        cookieStorage = [NSHTTPCookieStorage sharedCookieStorageForGroupContainerIdentifier:@"Cookies"];
-    }
-    [[cookieStorage cookies] enumerateObjectsUsingBlock:^(NSHTTPCookie *cookie, NSUInteger idx, BOOL *stop) {
+    for (NSHTTPCookie *cookie in cookieStorage.cookies) {
         [cookieStorage deleteCookie:cookie];
-    }];
+    }
 
-    NSOperatingSystemVersion version = { 10, 11, 0 };
-    if ([[NSProcessInfo processInfo] isOperatingSystemAtLeastVersion:version]) {
-        // cf. https://stackoverflow.com/questions/46465070/how-to-delete-cookies-from-wkhttpcookiestore/47928399#47928399
+    // clear WKWebView cookies for iOS 11+
+    if (@available(iOS 11.0, *)) {
+        WKHTTPCookieStore *cookieStore = [WKWebsiteDataStore defaultDataStore].httpCookieStore;
+        [cookieStore getAllCookies:^(NSArray<NSHTTPCookie *> *cookies) {
+            for (NSHTTPCookie *cookie in cookies) {
+                [cookieStore deleteCookie:cookie completionHandler:nil];
+            }
+        }];
+    }
+
+    // clears all WebKit data for iOS 9+
+    if (@available(iOS 9.0, *)) {
         NSSet *websiteDataTypes = [WKWebsiteDataStore allWebsiteDataTypes];
         NSDate *date = [NSDate dateWithTimeIntervalSince1970:0];
         [[WKWebsiteDataStore defaultDataStore] removeDataOfTypes:websiteDataTypes
                                                    modifiedSince:date
-                                               completionHandler:^{}];
+                                               completionHandler:^{
+            NSLog(@"WebView cookies and website data cleared.");
+        }];
     }
+    
+    [self addMessage:[NSString stringWithFormat:@"CallOnClearCookies:%s", "Cookies-Cleared"]];
 }
 
 + (void)saveCookies
@@ -1005,7 +1008,7 @@ extern "C" {
     void _CWebViewPlugin_RemoveCustomHeader(void *instance, const char *headerKey);
     void _CWebViewPlugin_ClearCustomHeader(void *instance);
     const char *_CWebViewPlugin_GetCustomHeaderValue(void *instance, const char *headerKey);
-    void _CWebViewPlugin_ClearCookies();
+    void _CWebViewPlugin_ClearCookies(void *instance);
     void _CWebViewPlugin_SaveCookies();
     void _CWebViewPlugin_GetCookies(void *instance, const char *url);
     const char *_CWebViewPlugin_GetMessage(void *instance);
@@ -1183,9 +1186,10 @@ void _CWebViewPlugin_ClearCustomHeader(void *instance)
     [webViewPlugin clearCustomRequestHeader];
 }
 
-void _CWebViewPlugin_ClearCookies()
+void _CWebViewPlugin_ClearCookies(void *instance)
 {
-    [CWebViewPlugin clearCookies];
+    CWebViewPlugin *webViewPlugin = (__bridge CWebViewPlugin *)instance;
+    [webViewPlugin clearCookies];
 }
 
 void _CWebViewPlugin_SaveCookies()
